@@ -77,48 +77,47 @@ class Requests:
             if DEBUG: print("[debug][registry] accepted")
             return (res, kwargs['headers']['Authorization'])
 
-        if res.status_code == 401:
-            if DEBUG: print("[debug][registry] Access denied. Refreshing token...")
-            oauth = www_authenticate.parse(res.headers['Www-Authenticate'])
-
-            if DEBUG:
-                print('[debug][auth][answer] Auth header:')
-                pprint.pprint(oauth['bearer'])
-
-            # print('[info] retreiving bearer token for {0}'.format(oauth['bearer']['scope']))
-            request_url = '{0}'.format(oauth['bearer']['realm'])
-            query_separator = '?'
-            if 'service' in oauth['bearer']:
-                request_url += '{0}service={1}'.format(query_separator, oauth['bearer']['service'])
-                query_separator = '&'
-            if 'scope' in oauth['bearer']:
-                request_url += '{0}scope={1}'.format(query_separator, oauth['bearer']['scope'])
-
-            if DEBUG:
-                print('[debug][auth][request] Refreshing auth token: POST {0}'.format(request_url))
-
-            if args.auth_method == 'GET':
-                try_oauth = requests.get(request_url, auth=auth, **kwargs)
-            else:
-                try_oauth = requests.post(request_url, auth=auth, **kwargs)
-
-            try:
-                oauth_response = ast.literal_eval(try_oauth._content.decode('utf-8'))
-                token = oauth_response['access_token'] if 'access_token' in oauth_response else oauth_response['token']
-            except SyntaxError:
-                print('\n\n[ERROR] couldnt accure token: {0}'.format(try_oauth._content))
-                sys.exit(1)
-
-            if DEBUG:
-                print('[debug][auth] token issued: ')
-                token_parsed=token.split('.')
-                pprint.pprint(ast.literal_eval(decode_base64(token_parsed[0])))
-                pprint.pprint(ast.literal_eval(decode_base64(token_parsed[1])))
-
-            kwargs['headers']['Authorization'] = 'Bearer {0}'.format(token)
-        else:
+        if res.status_code != 401:
             return (res, kwargs['headers']['Authorization'])
 
+        if DEBUG: print("[debug][registry] Access denied. Refreshing token...")
+        oauth = www_authenticate.parse(res.headers['Www-Authenticate'])
+
+        if DEBUG:
+            print('[debug][auth][answer] Auth header:')
+            pprint.pprint(oauth['bearer'])
+
+        # print('[info] retreiving bearer token for {0}'.format(oauth['bearer']['scope']))
+        request_url = '{0}'.format(oauth['bearer']['realm'])
+        query_separator = '?'
+        if 'service' in oauth['bearer']:
+            request_url += '{0}service={1}'.format(query_separator, oauth['bearer']['service'])
+            query_separator = '&'
+        if 'scope' in oauth['bearer']:
+            request_url += '{0}scope={1}'.format(query_separator, oauth['bearer']['scope'])
+
+        if DEBUG:
+            print('[debug][auth][request] Refreshing auth token: POST {0}'.format(request_url))
+
+        try_oauth = (
+            requests.get(request_url, auth=auth, **kwargs)
+            if args.auth_method == 'GET'
+            else requests.post(request_url, auth=auth, **kwargs)
+        )
+        try:
+            oauth_response = ast.literal_eval(try_oauth._content.decode('utf-8'))
+            token = oauth_response['access_token'] if 'access_token' in oauth_response else oauth_response['token']
+        except SyntaxError:
+            print('\n\n[ERROR] couldnt accure token: {0}'.format(try_oauth._content))
+            sys.exit(1)
+
+        if DEBUG:
+            print('[debug][auth] token issued: ')
+            token_parsed=token.split('.')
+            pprint.pprint(ast.literal_eval(decode_base64(token_parsed[0])))
+            pprint.pprint(ast.literal_eval(decode_base64(token_parsed[1])))
+
+        kwargs['headers']['Authorization'] = 'Bearer {0}'.format(token)
         res = requests.request(method, url, **kwargs)
         return (res, kwargs['headers']['Authorization'])
 
@@ -155,12 +154,9 @@ def get_error_explanation(context, error_code):
     error_list = {"delete_tag_405": 'You might want to set REGISTRY_STORAGE_DELETE_ENABLED: "true" in your registry',
                   "get_tag_digest_404": "Try adding flag --digest-method=GET"}
 
-    key = "%s_%s" % (context, error_code)
+    key = f"{context}_{error_code}"
 
-    if key in error_list.keys():
-        return(error_list[key])
-
-    return ''
+    return error_list.get(key, '')
 
 def get_auth_schemes(r,path):
     """ Returns list of auth schemes(lowcased) if www-authenticate: header exists
@@ -176,7 +172,7 @@ def get_auth_schemes(r,path):
     if 'Www-Authenticate' in try_oauth.headers:
         oauth = www_authenticate.parse(try_oauth.headers['Www-Authenticate'])
         if DEBUG:
-            print('[debug][docker] Auth schemes found:{0}'.format([m for m in oauth]))
+            print('[debug][docker] Auth schemes found:{0}'.format(list(oauth)))
         return [m.lower() for m in oauth]
     else:
         if DEBUG:
@@ -266,10 +262,7 @@ class Registry:
 
     def list_images(self):
         result = self.send('/v2/_catalog?n=10000')
-        if result is None:
-            return []
-
-        return json.loads(result.text)['repositories']
+        return [] if result is None else json.loads(result.text)['repositories']
 
     def list_tags(self, image_name):
         result = self.send("/v2/{0}/tags/list".format(image_name))
@@ -303,9 +296,7 @@ class Registry:
             print(get_error_explanation("get_tag_digest", self.last_error))
             return None
 
-        tag_digest = image_headers.headers['Docker-Content-Digest']
-
-        return tag_digest
+        return image_headers.headers['Docker-Content-Digest']
 
     def delete_tag(self, image_name, tag, dry_run, tag_digests_to_ignore):
         if dry_run:
@@ -345,12 +336,11 @@ class Registry:
             return []
 
         json_result = json.loads(layers_result.text)
-        if json_result['schemaVersion'] == 1:
-            layers = json_result['fsLayers']
-        else:
-            layers = json_result['layers']
-
-        return layers
+        return (
+            json_result['fsLayers']
+            if json_result['schemaVersion'] == 1
+            else json_result['layers']
+        )
 
     def get_tag_config(self, image_name, tag):
         config_result = self.send(
@@ -636,7 +626,7 @@ def get_tags(all_tags_list, image_name, tags_like):
     # get tags from image name if any
     if ":" in image_name:
         (image_name, tag_name) = image_name.split(":")
-        result = set([tag_name])
+        result = {tag_name}
 
     return result
 
@@ -688,7 +678,7 @@ def get_newer_tags(registry, image_name, hours, tags_list):
 
     print('---------------------------------')
     p = ThreadPool(4)
-    result = list(x for x in p.map(newer, tags_list) if x)
+    result = [x for x in p.map(newer, tags_list) if x]
     p.close()
     p.join()
     return result
@@ -712,7 +702,7 @@ def get_datetime_tags(registry, image_name, tags_list):
     if not args.plain:
         print('---------------------------------')
     p = ThreadPool(4)
-    result = list(x for x in p.map(newer, tags_list) if x)
+    result = [x for x in p.map(newer, tags_list) if x]
     p.close()
     p.join()
     return result
@@ -746,7 +736,7 @@ def get_ordered_tags(registry, image_name, tags_list, order_by_date=False):
 def main_loop(args):
     global DEBUG
 
-    DEBUG = True if args.debug else False
+    DEBUG = bool(args.debug)
 
     keep_last_versions = int(args.num)
 
@@ -776,9 +766,9 @@ def main_loop(args):
                 sys.exit(1)
 
             if password[-(len(os.linesep)):] == os.linesep:
-                password = password[0:-(len(os.linesep))]
+                password = password[:-(len(os.linesep))]
 
-        args.login = username + ':' + password
+        args.login = f'{username}:{password}'
 
     registry = Registry.create(args.host, args.login, args.no_validate_ssl,
                                args.digest_method)

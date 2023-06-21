@@ -229,20 +229,22 @@ class TestListTags(unittest.TestCase):
         self.assertEqual(self.registry.last_error, None)
 
     def test_list_tags_like_various(self):
-        tags_list = set(['FINAL_0.1', 'SNAPSHOT_0.1',
-                         "0.1.SNAP", "1.0.0_FINAL"])
-        self.assertEqual(get_tags(tags_list, "", set(
-            ["FINAL"])), set(["FINAL_0.1", "1.0.0_FINAL"]))
-        self.assertEqual(get_tags(tags_list, "", set(
-            ["SNAPSHOT"])), set(['SNAPSHOT_0.1']))
-        self.assertEqual(get_tags(tags_list, "", set()),
-                         set(['FINAL_0.1', 'SNAPSHOT_0.1', "0.1.SNAP", "1.0.0_FINAL"]))
-        self.assertEqual(get_tags(tags_list, "", set(["ABSENT"])), set())
-
+        tags_list = {'FINAL_0.1', 'SNAPSHOT_0.1', "0.1.SNAP", "1.0.0_FINAL"}
         self.assertEqual(
-            get_tags(tags_list, "IMAGE:TAG00", ""), set(["TAG00"]))
-        self.assertEqual(get_tags(tags_list, "IMAGE:TAG00", set(
-            ["WILL_NOT_BE_CONSIDERED"])), set(["TAG00"]))
+            get_tags(tags_list, "", {"FINAL"}), {"FINAL_0.1", "1.0.0_FINAL"}
+        )
+        self.assertEqual(get_tags(tags_list, "", {"SNAPSHOT"}), {'SNAPSHOT_0.1'})
+        self.assertEqual(
+            get_tags(tags_list, "", set()),
+            {'FINAL_0.1', 'SNAPSHOT_0.1', "0.1.SNAP", "1.0.0_FINAL"},
+        )
+        self.assertEqual(get_tags(tags_list, "", {"ABSENT"}), set())
+
+        self.assertEqual(get_tags(tags_list, "IMAGE:TAG00", ""), {"TAG00"})
+        self.assertEqual(
+            get_tags(tags_list, "IMAGE:TAG00", {"WILL_NOT_BE_CONSIDERED"}),
+            {"TAG00"},
+        )
 
 
 class TestListDigest(unittest.TestCase):
